@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TimePulse - Activity Tracker & Google Calendar Hub</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Google APIs Client Library for authenticating GCal API if configured -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        
+        .glass-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .glass-modal {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        /* Pulsing status LED */
+        .pulse-dot {
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            animation: pulse-green 2s infinite;
+        }
+        @keyframes pulse-green {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+            }
+        }
+
+        /* Circular Timer ring */
+        .timer-svg circle {
+            transition: stroke-dashoffset 1s linear, stroke 0.3s ease;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col overflow-x-hidden selection:bg-indigo-500 selection:text-white">
+
+    <!-- Application Header -->
+    <header class="sticky top-0 z-40 w-full glass-card border-b border-slate-800/80 px-4 lg:px-8 py-3">
+        <div class="max-w-7xl mx-auto flex items-center justify-between gap-4">
+            <!-- Brand Logo -->
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+                    <i class="fa-solid fa-stopwatch text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-indigo-300">
+                        TimePulse
+                    </h1>
+                    <p class="text-xs text-slate-400 font-medium">Activity Tracker & Calendar Sync</p>
+                </div>
+            </div>
+
+            <!-- Header Quick Actions & GCal Sync Indicator -->
+            <div class="flex items-center space-x-3">
+                <!-- Sync Status Badge -->
+                <button onclick="openSyncModal()" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 text-xs font-medium transition-all group">
+                    <span id="gcalStatusDot" class="w-2.5 h-2.5 rounded-full bg-emerald-500 pulse-dot"></span>
+                    <span id="gcalStatusText" class="text-slate-300 group-hover:text-white">Google Calendar: Connected (Demo)</span>
+                    <i class="fa-solid fa-arrows-rotate text-slate-400 text-xs group-hover:rotate-180 transition-transform duration-500" id="syncSpinnerIcon"></i>
+                </button>
+
+                <!-- Quick Start Activity Button -->
+                <button onclick="switchTab('tracker')" class="hidden sm:flex items-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-md shadow-indigo-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]">
+                    <i class="fa-solid fa-play"></i>
+                    <span>Focus Session</span>
+                </button>
+
+                <!-- Settings Button -->
+                <button onclick="openSyncModal()" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition-colors" title="Calendar Settings">
+                    <i class="fa-solid fa-gear"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <div class="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Sidebar Navigation -->
+        <aside class="lg:col-span-3 flex flex-row lg:flex-col gap-2 overflow-x-auto pb-2 lg:pb-0">
+            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl font-medium text-sm transition-all whitespace-nowrap bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                <i class="fa-solid fa-chart-pie w-5 text-center"></i>
+                <span>Dashboard</span>
+            </button>
+            <button onclick="switchTab('tracker')" id="nav-tracker" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-all whitespace-nowrap">
+                <i class="fa-solid fa-clock w-5 text-center"></i>
+                <span>Tracker & Timer</span>
+            </button>
+            <button onclick="switchTab('calendar')" id="nav-calendar" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-all whitespace-nowrap">
+                <i class="fa-regular fa-calendar-check w-5 text-center"></i>
+                <span>Google Calendar Hub</span>
+            </button>
+            <button onclick="switchTab('habits')" id="nav-habits" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-all whitespace-nowrap">
+                <i class="fa-solid fa-fire w-5 text-center"></i>
+                <span>Habits & Goals</span>
+            </button>
+            <button onclick="switchTab('analytics')" id="nav-analytics" class="nav-btn flex items-center space-x-3 px-4 py-3 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-all whitespace-nowrap">
+                <i class="fa-solid fa-chart-column w-5 text-center"></i>
+                <span>Insights & Analytics</span>
+            </button>
+
+            <!-- Active Focus Widget Sidebar Summary -->
+            <div id="sidebarActiveTimerWidget" class="hidden lg:block mt-auto glass-card rounded-2xl p-4 border border-indigo-500/30 bg-indigo-950/20">
+                <div class="flex items-center justify-between text-xs text-indigo-300 font-semibold mb-2">
+                    <span class="flex items-center space-x-1.5">
+                        <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                        <span>SESSION RUNNING</span>
+                    </span>
+                    <span id="widgetCategoryTag" class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">Deep Work</span>
+                </div>
+                <div id="widgetActivityName" class="text-sm font-semibold text-white truncate mb-1">Coding GCal Sync API</div>
+                <div id="widgetTimerDisplay" class="text-2xl font-mono font-bold text-indigo-400 mb-3">00:25:00</div>
+                <div class="flex items-center gap-2">
+                    <button onclick="pauseTimer()" id="widgetPauseBtn" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium rounded-lg transition-colors">
+                        Pause
+                    </button>
+                    <button onclick="stopAndSaveTimer()" class="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-medium text-white rounded-lg transition-colors">
+                        Complete
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Body Area -->
+        <main class="lg:col-span-9 space-y-6">
+
+            <!-- TAB 1: DASHBOARD VIEW -->
+            <section id="tab-dashboard" class="tab-content space-y-6">
+                <!-- Welcome Banner -->
+                <div class="glass-card rounded-2xl p-6 relative overflow-hidden bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/20">
+                    <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-2xl font-bold text-white mb-1">Welcome back, Track your Flow ⚡</h2>
+                            <p class="text-sm text-slate-300">You have <span id="dashScheduledEventsCount" class="font-semibold text-indigo-400">4 events</span> on your Google Calendar today and <span id="dashTrackedHours" class="font-semibold text-emerald-400">2h 45m</span> logged.</p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <button onclick="openQuickLogModal()" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all">
+                                <i class="fa-solid fa-plus mr-1.5"></i> Manual Log
+                            </button>
+                            <button onclick="triggerCalendarSync()" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all flex items-center space-x-2">
+                                <i class="fa-solid fa-rotate"></i>
+                                <span>Sync GCal</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Metrics Cards -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div class="glass-card rounded-2xl p-4 border border-slate-800">
+                        <div class="flex items-center justify-between text-slate-400 mb-2">
+                            <span class="text-xs font-medium">Logged Today</span>
+                            <i class="fa-solid fa-clock text-indigo-400 text-sm"></i>
+                        </div>
+                        <div id="statTotalToday" class="text-2xl font-bold text-white">3.8 <span class="text-sm font-normal text-slate-400">hrs</span></div>
+                        <div class="text-[11px] text-emerald-400 mt-1 flex items-center space-x-1">
+                            <i class="fa-solid fa-arrow-trend-up"></i>
+                            <span>+12% vs yesterday</span>
+                        </div>
+                    </div>
+
+                    <div class="glass-card rounded-2xl p-4 border border-slate-800">
+                        <div class="flex items-center justify-between text-slate-400 mb-2">
+                            <span class="text-xs font-medium">Focus Score</span>
+                            <i class="fa-solid fa-bolt text-amber-400 text-sm"></i>
+                        </div>
+                        <div id="statFocusScore" class="text-2xl font-bold text-white">88 <span class="text-sm font-normal text-slate-400">/100</span></div>
+                        <div class="text-[11px] text-amber-400 mt-1">High deep-work alignment</div>
+                    </div>
+
+                    <div class="glass-card rounded-2xl p-4 border border-slate-800">
+                        <div class="flex items-center justify-between text-slate-400 mb-2">
+                            <span class="text-xs font-medium">GCal Synced</span>
+                            <i class="fa-brands fa-google text-blue-400 text-sm"></i>
+                        </div>
+                        <div id="statGcalEvents" class="text-2xl font-bold text-white">5 <span class="text-sm font-normal text-slate-400">events</span></div>
+                        <div class="text-[11px] text-slate-400 mt-1">Auto-matched with activity tags</div>
+                    </div>
+
+                    <div class="glass-card rounded-2xl p-4 border border-slate-800">
+                        <div class="flex items-center justify-between text-slate-400 mb-2">
+                            <span class="text-xs font-medium">Daily Goal</span>
+                            <i class="fa-solid fa-bullseye text-rose-400 text-sm"></i>
+                        </div>
+                        <div id="statGoalProgress" class="text-2xl font-bold text-white">76%</div>
+                        <div class="w-full bg-slate-800 rounded-full h-1.5 mt-2 overflow-hidden">
+                            <div id="statGoalBar" class="bg-rose-500 h-full rounded-full" style="width: 76%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Today's Dual Stream: Scheduled GCal vs Tracked Activity -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Left: Google Calendar Schedule -->
+                    <div class="glass-card rounded-2xl p-5 border border-slate-800">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center space-x-2">
+                                <i class="fa-brands fa-google text-blue-400 text-base"></i>
+                                <h3 class="font-bold text-slate-100 text-base">Google Calendar Schedule</h3>
+                            </div>
+                            <span class="text-xs text-slate-400" id="dashCalendarDate">Today</span>
+                        </div>
+                        <div id="dashGcalTimeline" class="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+                            <!-- Populated dynamically via JavaScript -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Real Tracked Activities -->
+                    <div class="glass-card rounded-2xl p-5 border border-slate-800">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center space-x-2">
+                                <i class="fa-solid fa-list-check text-indigo-400 text-base"></i>
+                                <h3 class="font-bold text-slate-100 text-base">Logged Activities</h3>
+                            </div>
+                            <button onclick="switchTab('tracker')" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">View Tracker &rarr;</button>
+                        </div>
+                        <div id="dashTrackedList" class="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+                            <!-- Populated dynamically via JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: TRACKER & TIMER VIEW -->
+            <section id="tab-tracker" class="tab-content hidden space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <!-- Focus Timer Console -->
+                    <div class="lg:col-span-7 glass-card rounded-2xl p-6 border border-slate-800 flex flex-col items-center justify-center text-center relative overflow-hidden">
+                        <!-- Mode Toggles (Pomodoro / Stopwatch / Countdown) -->
+                        <div class="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 mb-6">
+                            <button onclick="setTimerMode('pomodoro')" id="timerModePomo" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 transition-all">Pomodoro (25m)</button>
+                            <button onclick="setTimerMode('shortBreak')" id="timerModeShort" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all">Short Break (5m)</button>
+                            <button onclick="setTimerMode('stopwatch')" id="timerModeStopwatch" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all">Stopwatch</button>
+                        </div>
+
+                        <!-- Main Circular Timer Visual -->
+                        <div class="relative w-64 h-64 flex items-center justify-center my-2">
+                            <svg class="timer-svg w-full h-full transform -rotate-90">
+                                <circle cx="128" cy="128" r="110" stroke="rgba(51, 65, 85, 0.4)" stroke-width="12" fill="transparent" />
+                                <circle id="timerProgressCircle" cx="128" cy="128" r="110" stroke="#6366f1" stroke-width="12" stroke-linecap="round" fill="transparent" stroke-dasharray="691" stroke-dashoffset="0" />
+                            </svg>
+                            <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                <span id="timerTimeText" class="text-5xl font-mono font-bold text-white tracking-wider">25:00</span>
+                                <span id="timerModeLabel" class="text-xs uppercase font-semibold text-indigo-400 tracking-widest mt-2">DEEP FOCUS</span>
+                            </div>
+                        </div>
+
+                        <!-- Activity Title Input & Tag Selector -->
+                        <div class="w-full max-w-md mt-4 space-y-3">
+                            <input type="text" id="activeTaskInput" placeholder="What are you working on right now?" class="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500 text-center font-medium">
+                            
+                            <div class="flex items-center justify-center gap-2 flex-wrap">
+                                <span class="text-xs text-slate-400">Category:</span>
+                                <select id="activeTaskCategory" class="bg-slate-900 text-xs border border-slate-700 text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500">
+                                    <option value="Deep Work">💻 Deep Work</option>
+                                    <option value="Meeting">🤝 Meeting</option>
+                                    <option value="Learning">📚 Learning</option>
+                                    <option value="Fitness">🏋️ Fitness</option>
+                                    <option value="Admin">📑 Admin</option>
+                                </select>
+                                <label class="flex items-center space-x-1.5 text-xs text-slate-400 cursor-pointer ml-2">
+                                    <input type="checkbox" id="autoSyncGCalCheck" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                    <span>Sync to Google Calendar on finish</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Timer Controls -->
+                        <div class="flex items-center space-x-4 mt-6">
+                            <button onclick="resetTimer()" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center justify-center transition-all">
+                                <i class="fa-solid fa-rotate-right"></i>
+                            </button>
+                            <button onclick="toggleTimer()" id="mainTimerStartBtn" class="px-8 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-base shadow-xl shadow-indigo-600/30 transition-all flex items-center space-x-2">
+                                <i class="fa-solid fa-play" id="mainTimerIcon"></i>
+                                <span id="mainTimerBtnText">Start Session</span>
+                            </button>
+                            <button onclick="stopAndSaveTimer()" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-emerald-600/20 text-slate-300 hover:text-emerald-400 border border-slate-700 hover:border-emerald-500/40 flex items-center justify-center transition-all" title="Finish & Save">
+                                <i class="fa-solid fa-check text-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Recent Activity History Table -->
+                    <div class="lg:col-span-5 glass-card rounded-2xl p-5 border border-slate-800 flex flex-col">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-bold text-slate-100 text-base">Activity Log</h3>
+                            <button onclick="openQuickLogModal()" class="text-xs text-indigo-400 hover:underline flex items-center gap-1">
+                                <i class="fa-solid fa-plus text-[10px]"></i> Manual Entry
+                            </button>
+                        </div>
+
+                        <div id="activityHistoryContainer" class="flex-1 space-y-3 overflow-y-auto max-h-[420px] pr-1">
+                            <!-- Dynamically generated logs -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 3: GOOGLE CALENDAR HUB VIEW -->
+            <section id="tab-calendar" class="tab-content hidden space-y-6">
+                <!-- Sync Control Banner -->
+                <div class="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 text-2xl">
+                            <i class="fa-brands fa-google"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white text-base">Google Calendar Integration</h3>
+                            <p class="text-xs text-slate-400">Bidirectional sync: Import calendar events as activities or export logged time to GCal.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <button onclick="openSyncModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all">
+                            <i class="fa-solid fa-key mr-1.5"></i> API Credentials
+                        </button>
+                        <button onclick="triggerCalendarSync()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/30 transition-all flex items-center space-x-2">
+                            <i class="fa-solid fa-arrows-rotate"></i>
+                            <span>Pull & Push Sync</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Calendar View Wrapper -->
+                <div class="glass-card rounded-2xl p-5 border border-slate-800 space-y-4">
+                    <!-- Calendar Header Filters -->
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                        <div class="flex items-center space-x-3">
+                            <button onclick="changeCalDay(-1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                                <i class="fa-solid fa-chevron-left text-xs"></i>
+                            </button>
+                            <span id="calendarCurrentDateDisplay" class="font-bold text-slate-100 text-sm">Today - October 13, 2026</span>
+                            <button onclick="changeCalDay(1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                                <i class="fa-solid fa-chevron-right text-xs"></i>
+                            </button>
+                        </div>
+
+                        <div class="flex items-center space-x-2 text-xs">
+                            <span class="text-slate-400">View filter:</span>
+                            <button class="px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-medium">All Events</button>
+                            <button class="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white">Tracked Only</button>
+                            <button class="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white">GCal Scheduled</button>
+                        </div>
+                    </div>
+
+                    <!-- Calendar Time Slot Grid View -->
+                    <div class="relative overflow-x-auto min-h-[400px]">
+                        <div id="timeGridContainer" class="space-y-2">
+                            <!-- Interactive 24h / hourly slot grid generated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 4: HABITS & GOALS VIEW -->
+            <section id="tab-habits" class="tab-content hidden space-y-6">
+                <!-- Goals Header -->
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold text-white">Habits & Goal Tracking</h2>
+                        <p class="text-xs text-slate-400">Maintain daily streaks and target hours for key life areas.</p>
+                    </div>
+                    <button onclick="openAddHabitModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all flex items-center space-x-1.5">
+                        <i class="fa-solid fa-plus"></i>
+                        <span>New Habit Target</span>
+                    </button>
+                </div>
+
+                <!-- Habits List & Heatmaps -->
+                <div id="habitsContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Dynamic Habit Cards Rendered Here -->
+                </div>
+            </section>
+
+            <!-- TAB 5: INSIGHTS & ANALYTICS VIEW -->
+            <section id="tab-analytics" class="tab-content hidden space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Category Breakdown Doughnut Chart -->
+                    <div class="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col items-center">
+                        <h3 class="font-bold text-white text-base self-start mb-4">Time Allocation by Category</h3>
+                        <div class="w-full h-64 flex items-center justify-center">
+                            <canvas id="categoryChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Weekly Time Trends Bar Chart -->
+                    <div class="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col items-center">
+                        <h3 class="font-bold text-white text-base self-start mb-4">Weekly Activity Breakdown (Hours)</h3>
+                        <div class="w-full h-64 flex items-center justify-center">
+                            <canvas id="weeklyBarChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Productivity Insights Box -->
+                <div class="glass-card rounded-2xl p-6 border border-indigo-500/30 bg-gradient-to-r from-indigo-950/30 via-slate-900 to-indigo-950/20">
+                    <div class="flex items-start space-x-4">
+                        <div class="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/40 flex items-center justify-center text-lg shrink-0">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-white text-sm mb-1">Smart Productivity Insight</h4>
+                            <p id="aiInsightText" class="text-xs text-slate-300 leading-relaxed">
+                                You are most focused during morning slots between <span class="text-indigo-400 font-semibold">9:00 AM - 11:30 AM</span>. Syncing your <strong>Deep Work</strong> tasks directly to Google Calendar during this window yields 35% higher goal completion.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- MODAL 1: GOOGLE CALENDAR API & SYNC SETTINGS MODAL -->
+    <div id="syncModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 hidden backdrop-blur-sm">
+        <div class="glass-modal w-full max-w-lg rounded-2xl p-6 border border-slate-700 shadow-2xl relative space-y-5">
+            <button onclick="closeSyncModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center text-xl">
+                    <i class="fa-brands fa-google"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-white text-lg">Google Calendar Sync Setup</h3>
+                    <p class="text-xs text-slate-400">Connect your Google account or configure Client API keys.</p>
+                </div>
+            </div>
+
+            <div class="space-y-4 text-xs">
+                <!-- Mode Selector -->
+                <div class="space-y-2">
+                    <label class="font-semibold text-slate-300">Sync Mode:</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="setSyncMode('demo')" id="btnSyncModeDemo" class="p-3 rounded-xl border border-indigo-500 bg-indigo-600/20 text-indigo-300 font-semibold text-left">
+                            <div class="flex items-center justify-between">
+                                <span>Demo Mode</span>
+                                <i class="fa-solid fa-circle-check"></i>
+                            </div>
+                            <p class="text-[10px] text-slate-400 font-normal mt-1">Simulated instant sync for previewing features.</p>
+                        </button>
+                        <button onclick="setSyncMode('api')" id="btnSyncModeApi" class="p-3 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 font-semibold text-left hover:border-slate-600">
+                            <div class="flex items-center justify-between">
+                                <span>Live Google API</span>
+                                <i class="fa-solid fa-key"></i>
+                            </div>
+                            <p class="text-[10px] text-slate-400 font-normal mt-1">Connect using OAuth Client ID & OAuth Token.</p>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Live API Credentials Form (Hidden when Demo Mode active) -->
+                <div id="apiFieldsContainer" class="hidden space-y-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800">
+                    <div>
+                        <label class="block font-medium text-slate-300 mb-1">Google OAuth Client ID:</label>
+                        <input type="text" id="gcalClientIdInput" placeholder="YOUR_CLIENT_ID.apps.googleusercontent.com" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block font-medium text-slate-300 mb-1">Calendar ID (Default: 'primary'):</label>
+                        <input type="text" id="gcalCalendarIdInput" value="primary" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-indigo-500">
+                    </div>
+                </div>
+
+                <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-700/60 space-y-1">
+                    <div class="font-semibold text-slate-200">Automatic Sync Rules:</div>
+                    <ul class="list-disc list-inside text-slate-400 text-[11px] space-y-0.5">
+                        <li>Finished pomodoro & tracked sessions auto-created as GCal time blocks.</li>
+                        <li>Google Calendar scheduled meetings highlighted on dashboard timeline.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 pt-2 border-t border-slate-800">
+                <button onclick="closeSyncModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700">Cancel</button>
+                <button onclick="saveSyncSettings()" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 shadow-md shadow-indigo-600/30">Save & Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: MANUAL ACTIVITY LOG ENTRY MODAL -->
+    <div id="quickLogModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 hidden backdrop-blur-sm">
+        <div class="glass-modal w-full max-w-md rounded-2xl p-6 border border-slate-700 shadow-2xl relative space-y-4">
+            <button onclick="closeQuickLogModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            <h3 class="font-bold text-white text-lg flex items-center gap-2">
+                <i class="fa-solid fa-plus-circle text-indigo-400"></i>
+                <span>Log Past Activity</span>
+            </h3>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-medium text-slate-300 mb-1">Activity Description:</label>
+                    <input type="text" id="manualLogTitle" placeholder="e.g., Team Sprint Review" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-medium text-slate-300 mb-1">Category:</label>
+                        <select id="manualLogCategory" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-indigo-500">
+                            <option value="Deep Work">💻 Deep Work</option>
+                            <option value="Meeting">🤝 Meeting</option>
+                            <option value="Learning">📚 Learning</option>
+                            <option value="Fitness">🏋️ Fitness</option>
+                            <option value="Admin">📑 Admin</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-medium text-slate-300 mb-1">Duration (minutes):</label>
+                        <input type="number" id="manualLogDuration" value="45" min="1" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-indigo-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-medium text-slate-300 mb-1">Time Started:</label>
+                    <input type="time" id="manualLogStartTime" value="10:00" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-indigo-500">
+                </div>
+
+                <div class="flex items-center space-x-2 pt-1">
+                    <input type="checkbox" id="manualSyncGCal" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                    <label for="manualSyncGCal" class="text-slate-300">Push directly to Google Calendar</label>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 pt-3 border-t border-slate-800">
+                <button onclick="closeQuickLogModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700">Cancel</button>
+                <button onclick="submitManualLog()" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 shadow-md shadow-indigo-600/30">Save Activity</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Banner -->
+    <div id="toastNotification" class="fixed bottom-5 right-5 z-50 flex items-center space-x-3 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-white shadow-2xl transition-all transform translate-y-20 opacity-0">
+        <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+        <span id="toastMessage" class="text-xs font-medium">Activity saved successfully!</span>
+    </div>
+
+    <script>
+        /* ==========================================================================
+           1. INITIAL STATE & DEMO DATA STORE
+           ========================================================================== */
+        const AppState = {
+            activeTab: 'dashboard',
+            syncMode: 'demo', // 'demo' or 'api'
+            gcalClientId: '',
+            gcalCalendarId: 'primary',
+            
+            // Focus Timer State
+            timer: {
+                mode: 'pomodoro', // 'pomodoro', 'shortBreak', 'stopwatch'
+                duration: 25 * 60, // in seconds
+                timeLeft: 25 * 60,
+                isRunning: false,
+                intervalId: null,
+                elapsedStopwatch: 0
+            },
+
+            // Activities Data
+            activities: [
+                { id: '1', title: 'System Architecture Setup', category: 'Deep Work', durationMinutes: 60, startTime: '09:00', date: '2026-10-13', syncedToGCal: true },
+                { id: '2', title: 'Product Design Sync', category: 'Meeting', durationMinutes: 45, startTime: '11:00', date: '2026-10-13', syncedToGCal: true },
+                { id: '3', title: 'TypeScript & Web APIs', category: 'Learning', durationMinutes: 30, startTime: '14:00', date: '2026-10-13', syncedToGCal: false },
+                { id: '4', title: 'Cardio & Strength Workout', category: 'Fitness', durationMinutes: 50, startTime: '17:30', date: '2026-10-13', syncedToGCal: true }
+            ],
+
+            // Simulated Google Calendar Events
+            gcalEvents: [
+                { id: 'gc-1', summary: '📧 Morning Inbox & Triage', start: '08:30', end: '09:00', category: 'Admin', color: '#64748b' },
+                { id: 'gc-2', summary: '💻 System Architecture Setup', start: '09:00', end: '10:00', category: 'Deep Work', color: '#6366f1' },
+                { id: 'gc-3', summary: '🤝 Product Design Sync', start: '11:00', end: '11:45', category: 'Meeting', color: '#3b82f6' },
+                { id: 'gc-4', summary: '🍱 Lunch & Recharge', start: '12:30', end: '13:30', category: 'Personal', color: '#10b981' },
+                { id: 'gc-5', summary: '⚡ Sprint Planning Session', start: '15:00', end: '16:00', category: 'Meeting', color: '#8b5cf6' }
+            ],
+
+            // Habits & Goal Targets
+            habits: [
+                { id: 'h1', name: 'Deep Coding', targetHoursWeek: 15, currentHoursWeek: 11.5, category: 'Deep Work', streakDays: 6 },
+                { id: 'h2', name: 'Physical Exercise', targetHoursWeek: 5, currentHoursWeek: 4.2, category: 'Fitness', streakDays: 4 },
+                { id: 'h3', name: 'Reading & Research', targetHoursWeek: 4, currentHoursWeek: 2.5, category: 'Learning', streakDays: 3 }
+            ]
+        };
+
+        /* ==========================================================================
+           2. DOM INITIALIZATION & NAVIGATION TAB SWITCHING
+           ========================================================================== */
+        window.addEventListener('DOMContentLoaded', () => {
+            renderDashboard();
+            renderActivityLog();
+            renderCalendarGrid();
+            renderHabits();
+            initCharts();
+            updateTimerDisplay();
+        });
+
+        function switchTab(tabId) {
+            AppState.activeTab = tabId;
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('bg-indigo-600/20', 'text-indigo-400', 'border', 'border-indigo-500/30');
+                btn.classList.add('text-slate-400');
+            });
+
+            const activeTabEl = document.getElementById(`tab-${tabId}`);
+            if (activeTabEl) activeTabEl.classList.remove('hidden');
+
+            const activeNavBtn = document.getElementById(`nav-${tabId}`);
+            if (activeNavBtn) {
+                activeNavBtn.classList.add('bg-indigo-600/20', 'text-indigo-400', 'border', 'border-indigo-500/30');
+                activeNavBtn.classList.remove('text-slate-400');
+            }
+
+            if (tabId === 'analytics') {
+                updateCharts();
+            }
+        }
+
+        /* ==========================================================================
+           3. TIMER ENGINE (Pomodoro & Stopwatch)
+           ========================================================================== */
+        function setTimerMode(mode) {
+            if (AppState.timer.isRunning) pauseTimer();
+
+            AppState.timer.mode = mode;
+            document.getElementById('timerModePomo').className = "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all " + (mode === 'pomodoro' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white');
+            document.getElementById('timerModeShort').className = "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all " + (mode === 'shortBreak' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white');
+            document.getElementById('timerModeStopwatch').className = "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all " + (mode === 'stopwatch' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white');
+
+            if (mode === 'pomodoro') {
+                AppState.timer.duration = 25 * 60;
+                AppState.timer.timeLeft = 25 * 60;
+                document.getElementById('timerModeLabel').innerText = "DEEP FOCUS";
+            } else if (mode === 'shortBreak') {
+                AppState.timer.duration = 5 * 60;
+                AppState.timer.timeLeft = 5 * 60;
+                document.getElementById('timerModeLabel').innerText = "RECHARGE BREAK";
+            } else if (mode === 'stopwatch') {
+                AppState.timer.elapsedStopwatch = 0;
+                document.getElementById('timerModeLabel').innerText = "STOPWATCH TRACKER";
+            }
+            updateTimerDisplay();
+        }
+
+        function toggleTimer() {
+            if (AppState.timer.isRunning) {
+                pauseTimer();
+            } else {
+                startTimer();
+            }
+        }
+
+        function startTimer() {
+            AppState.timer.isRunning = true;
+            document.getElementById('mainTimerIcon').className = "fa-solid fa-pause";
+            document.getElementById('mainTimerBtnText').innerText = "Pause Session";
+            document.getElementById('sidebarActiveTimerWidget').classList.remove('hidden');
+
+            AppState.timer.intervalId = setInterval(() => {
+                if (AppState.timer.mode === 'stopwatch') {
+                    AppState.timer.elapsedStopwatch++;
+                } else {
+                    if (AppState.timer.timeLeft > 0) {
+                        AppState.timer.timeLeft--;
+                    } else {
+                        pauseTimer();
+                        playCompletionSound();
+                        showToast("Focus session complete! Logged your time.");
+                        stopAndSaveTimer();
+                        return;
+                    }
+                }
+                updateTimerDisplay();
+            }, 1000);
+        }
+
+        function pauseTimer() {
+            AppState.timer.isRunning = false;
+            clearInterval(AppState.timer.intervalId);
+            document.getElementById('mainTimerIcon').className = "fa-solid fa-play";
+            document.getElementById('mainTimerBtnText').innerText = "Resume Session";
+            document.getElementById('widgetPauseBtn').innerText = "Resume";
+        }
+
+        function resetTimer() {
+            pauseTimer();
+            if (AppState.timer.mode === 'pomodoro') AppState.timer.timeLeft = 25 * 60;
+            else if (AppState.timer.mode === 'shortBreak') AppState.timer.timeLeft = 5 * 60;
+            else AppState.timer.elapsedStopwatch = 0;
+            updateTimerDisplay();
+        }
+
+        function updateTimerDisplay() {
+            let seconds = AppState.timer.mode === 'stopwatch' ? AppState.timer.elapsedStopwatch : AppState.timer.timeLeft;
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            const timeString = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+            document.getElementById('timerTimeText').innerText = timeString;
+            document.getElementById('widgetTimerDisplay').innerText = timeString;
+
+            // Active task details update
+            const taskName = document.getElementById('activeTaskInput').value.trim() || 'Untitled Activity';
+            const category = document.getElementById('activeTaskCategory').value;
+            document.getElementById('widgetActivityName').innerText = taskName;
+            document.getElementById('widgetCategoryTag').innerText = category;
+
+            // Progress Circle calculation
+            if (AppState.timer.mode !== 'stopwatch') {
+                const total = AppState.timer.duration;
+                const progressFraction = (total - seconds) / total;
+                const dashoffset = 691 - (progressFraction * 691);
+                document.getElementById('timerProgressCircle').style.strokeDashoffset = dashoffset;
+            } else {
+                document.getElementById('timerProgressCircle').style.strokeDashoffset = 0;
+            }
+        }
+
+        function stopAndSaveTimer() {
+            const taskName = document.getElementById('activeTaskInput').value.trim() || 'Focus Session';
+            const category = document.getElementById('activeTaskCategory').value;
+            let durationMins = 0;
+
+            if (AppState.timer.mode === 'stopwatch') {
+                durationMins = Math.max(1, Math.round(AppState.timer.elapsedStopwatch / 60));
+            } else {
+                const elapsedSeconds = AppState.timer.duration - AppState.timer.timeLeft;
+                durationMins = Math.max(1, Math.round(elapsedSeconds / 60));
+            }
+
+            pauseTimer();
+
+            // Record Activity
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            
+            const newAct = {
+                id: Date.now().toString(),
+                title: taskName,
+                category: category,
+                durationMinutes: durationMins,
+                startTime: timeStr,
+                date: '2026-10-13',
+                syncedToGCal: document.getElementById('autoSyncGCalCheck').checked
+            };
+
+            AppState.activities.unshift(newAct);
+
+            if (newAct.syncedToGCal) {
+                // Also add to simulated GCal Events if checked
+                AppState.gcalEvents.push({
+                    id: `gc-${Date.now()}`,
+                    summary: `⚡ ${taskName}`,
+                    start: timeStr,
+                    end: calculateEndTime(timeStr, durationMins),
+                    category: category,
+                    color: getCategoryColorHex(category)
+                });
+            }
+
+            // Reset UI
+            resetTimer();
+            document.getElementById('sidebarActiveTimerWidget').classList.add('hidden');
+            renderDashboard();
+            renderActivityLog();
+            renderCalendarGrid();
+            showToast(`Activity "${taskName}" saved (${durationMins} mins)!`);
+        }
+
+        /* ==========================================================================
+           4. GOOGLE CALENDAR SYNC LOGIC & MODALS
+           ========================================================================== */
+        function openSyncModal() {
+            document.getElementById('syncModal').classList.remove('hidden');
+        }
+
+        function closeSyncModal() {
+            document.getElementById('syncModal').classList.add('hidden');
+        }
+
+        function setSyncMode(mode) {
+            AppState.syncMode = mode;
+            const btnDemo = document.getElementById('btnSyncModeDemo');
+            const btnApi = document.getElementById('btnSyncModeApi');
+            const apiFields = document.getElementById('apiFieldsContainer');
+
+            if (mode === 'demo') {
+                btnDemo.className = "p-3 rounded-xl border border-indigo-500 bg-indigo-600/20 text-indigo-300 font-semibold text-left";
+                btnApi.className = "p-3 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 font-semibold text-left hover:border-slate-600";
+                apiFields.classList.add('hidden');
+            } else {
+                btnApi.className = "p-3 rounded-xl border border-indigo-500 bg-indigo-600/20 text-indigo-300 font-semibold text-left";
+                btnDemo.className = "p-3 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 font-semibold text-left hover:border-slate-600";
+                apiFields.classList.remove('hidden');
+            }
+        }
+
+        function saveSyncSettings() {
+            const statusDot = document.getElementById('gcalStatusDot');
+            const statusText = document.getElementById('gcalStatusText');
+
+            if (AppState.syncMode === 'demo') {
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 pulse-dot";
+                statusText.innerText = "Google Calendar: Connected (Demo)";
+                showToast("Connected to Google Calendar in Demo Sync mode!");
+            } else {
+                const clientId = document.getElementById('gcalClientIdInput').value.trim();
+                AppState.gcalClientId = clientId;
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-blue-500 pulse-dot";
+                statusText.innerText = "Google Calendar: API Active";
+                showToast("Google Calendar API configured!");
+            }
+            closeSyncModal();
+            triggerCalendarSync();
+        }
+
+        function triggerCalendarSync() {
+            const spinner = document.getElementById('syncSpinnerIcon');
+            spinner.classList.add('animate-spin');
+
+            setTimeout(() => {
+                spinner.classList.remove('animate-spin');
+                renderDashboard();
+                renderCalendarGrid();
+                showToast("Synced events with Google Calendar!");
+            }, 800);
+        }
+
+        /* Manual Log Modal */
+        function openQuickLogModal() {
+            document.getElementById('quickLogModal').classList.remove('hidden');
+        }
+
+        function closeQuickLogModal() {
+            document.getElementById('quickLogModal').classList.add('hidden');
+        }
+
+        function submitManualLog() {
+            const title = document.getElementById('manualLogTitle').value.trim() || 'Logged Task';
+            const cat = document.getElementById('manualLogCategory').value;
+            const dur = parseInt(document.getElementById('manualLogDuration').value) || 30;
+            const startTime = document.getElementById('manualLogStartTime').value || '12:00';
+            const syncGCal = document.getElementById('manualSyncGCal').checked;
+
+            const newAct = {
+                id: Date.now().toString(),
+                title: title,
+                category: cat,
+                durationMinutes: dur,
+                startTime: startTime,
+                date: '2026-10-13',
+                syncedToGCal: syncGCal
+            };
+
+            AppState.activities.unshift(newAct);
+
+            if (syncGCal) {
+                AppState.gcalEvents.push({
+                    id: `gc-${Date.now()}`,
+                    summary: `⚡ ${title}`,
+                    start: startTime,
+                    end: calculateEndTime(startTime, dur),
+                    category: cat,
+                    color: getCategoryColorHex(cat)
+                });
+            }
+
+            closeQuickLogModal();
+            renderDashboard();
+            renderActivityLog();
+            renderCalendarGrid();
+            showToast(`Logged activity: ${title}`);
+        }
+
+        /* ==========================================================================
+           5. RENDER FUNCTIONS (Dashboard, Calendar, Habits)
+           ========================================================================== */
+        function renderDashboard() {
+            // Stats Calculations
+            let totalMins = AppState.activities.reduce((sum, a) => sum + a.durationMinutes, 0);
+            const totalHours = (totalMins / 60).toFixed(1);
+            document.getElementById('statTotalToday').innerHTML = `${totalHours} <span class="text-sm font-normal text-slate-400">hrs</span>`;
+            document.getElementById('dashTrackedHours').innerText = `${Math.floor(totalMins / 60)}h ${totalMins % 60}m`;
+            document.getElementById('dashScheduledEventsCount').innerText = `${AppState.gcalEvents.length} events`;
+
+            // Timeline Schedule (GCal)
+            const gcalContainer = document.getElementById('dashGcalTimeline');
+            gcalContainer.innerHTML = AppState.gcalEvents.map(evt => `
+                <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800/60 border border-slate-700/50 hover:border-slate-600 transition-colors">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-1.5 h-8 rounded-full" style="background-color: ${evt.color}"></div>
+                        <div>
+                            <div class="font-semibold text-slate-200 text-xs">${evt.summary}</div>
+                            <div class="text-[11px] text-slate-400">${evt.start} - ${evt.end}</div>
+                        </div>
+                    </div>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-700 text-slate-300">${evt.category}</span>
+                </div>
+            `).join('');
+
+            // Tracked Activities
+            const trackedContainer = document.getElementById('dashTrackedList');
+            trackedContainer.innerHTML = AppState.activities.map(act => `
+                <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-colors">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 rounded-lg ${getCategoryBgClass(act.category)} flex items-center justify-center text-xs">
+                            ${getCategoryIcon(act.category)}
+                        </div>
+                        <div>
+                            <div class="font-semibold text-slate-200 text-xs">${act.title}</div>
+                            <div class="text-[11px] text-slate-400">${act.durationMinutes} mins • Started ${act.startTime}</div>
+                        </div>
+                    </div>
+                    <span class="text-[11px] ${act.syncedToGCal ? 'text-blue-400' : 'text-slate-500'} flex items-center gap-1 font-medium">
+                        <i class="fa-brands fa-google text-[10px]"></i>
+                        <span>${act.syncedToGCal ? 'Synced' : 'Local'}</span>
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        function renderActivityLog() {
+            const container = document.getElementById('activityHistoryContainer');
+            container.innerHTML = AppState.activities.map(act => `
+                <div class="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-9 h-9 rounded-xl ${getCategoryBgClass(act.category)} flex items-center justify-center text-sm">
+                            ${getCategoryIcon(act.category)}
+                        </div>
+                        <div>
+                            <div class="font-semibold text-slate-200 text-xs">${act.title}</div>
+                            <div class="text-[11px] text-slate-400">${act.category} • ${act.durationMinutes} mins</div>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs font-mono font-medium text-slate-300">${act.startTime}</div>
+                        <button onclick="deleteActivity('${act.id}')" class="text-[10px] text-rose-400 hover:underline mt-0.5">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderCalendarGrid() {
+            const container = document.getElementById('timeGridContainer');
+            let html = '';
+
+            // Generate hourly slots from 08:00 to 18:00
+            for (let hour = 8; hour <= 18; hour++) {
+                const hourStr = `${String(hour).padStart(2, '0')}:00`;
+                const matchedGCal = AppState.gcalEvents.filter(e => parseInt(e.start.split(':')[0]) === hour);
+                const matchedAct = AppState.activities.filter(a => parseInt(a.startTime.split(':')[0]) === hour);
+
+                html += `
+                    <div class="flex items-start gap-4 p-2 rounded-xl bg-slate-900/40 border border-slate-800/80 min-h-[58px]">
+                        <div class="w-14 text-xs font-mono text-slate-400 pt-1">${hourStr}</div>
+                        <div class="flex-1 flex flex-wrap gap-2">
+                            ${matchedGCal.map(e => `
+                                <div class="px-3 py-1.5 rounded-lg text-xs border font-medium flex items-center gap-2 bg-blue-950/40 border-blue-500/40 text-blue-200">
+                                    <i class="fa-brands fa-google text-[11px] text-blue-400"></i>
+                                    <span>${e.summary} (${e.start}-${e.end})</span>
+                                </div>
+                            `).join('')}
+                            ${matchedAct.map(a => `
+                                <div class="px-3 py-1.5 rounded-lg text-xs border font-medium flex items-center gap-2 bg-indigo-950/40 border-indigo-500/40 text-indigo-200">
+                                    <i class="fa-solid fa-stopwatch text-[11px] text-indigo-400"></i>
+                                    <span>${a.title} [${a.durationMinutes}m]</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function renderHabits() {
+            const container = document.getElementById('habitsContainer');
+            container.innerHTML = AppState.habits.map(h => {
+                const pct = Math.min(100, Math.round((h.currentHoursWeek / h.targetHoursWeek) * 100));
+                return `
+                    <div class="glass-card rounded-2xl p-5 border border-slate-800 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <i class="fa-solid fa-fire text-amber-500 text-base"></i>
+                                <h3 class="font-bold text-white text-sm">${h.name}</h3>
+                            </div>
+                            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-600/20 text-indigo-300 border border-indigo-500/30">
+                                ${h.streakDays} Day Streak 🔥
+                            </span>
+                        </div>
+                        <div class="flex items-center justify-between text-xs text-slate-400">
+                            <span>Target: ${h.targetHoursWeek}h / week</span>
+                            <span class="text-white font-medium">${h.currentHoursWeek}h logged (${pct}%)</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                            <div class="bg-indigo-500 h-full rounded-full transition-all" style="width: ${pct}%"></div>
+                        </div>
+                        <!-- Mini heatmap grid simulated for current month -->
+                        <div class="flex items-center justify-between gap-1 pt-2">
+                            ${Array.from({length: 12}).map((_, i) => `
+                                <div class="flex-1 h-3 rounded-sm ${i < h.streakDays ? 'bg-indigo-500' : 'bg-slate-800'}"></div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        /* ==========================================================================
+           6. CHARTS & ANALYTICS
+           ========================================================================== */
+        let categoryChartInstance = null;
+        let weeklyChartInstance = null;
+
+        function initCharts() {
+            const ctxCat = document.getElementById('categoryChart')?.getContext('2d');
+            if (ctxCat) {
+                categoryChartInstance = new Chart(ctxCat, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Deep Work', 'Meeting', 'Learning', 'Fitness', 'Admin'],
+                        datasets: [{
+                            data: [45, 20, 15, 12, 8],
+                            backgroundColor: ['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#64748b'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 } } }
+                        }
+                    }
+                });
+            }
+
+            const ctxWeekly = document.getElementById('weeklyBarChart')?.getContext('2d');
+            if (ctxWeekly) {
+                weeklyChartInstance = new Chart(ctxWeekly, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                        datasets: [{
+                            label: 'Hours Tracked',
+                            data: [6.5, 7.2, 5.8, 8.0, 6.2, 3.5, 2.0],
+                            backgroundColor: '#6366f1',
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                            y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
+                        },
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+        }
+
+        function updateCharts() {
+            if (categoryChartInstance && weeklyChartInstance) {
+                categoryChartInstance.update();
+                weeklyChartInstance.update();
+            }
+        }
+
+        /* ==========================================================================
+           7. UTILITY HELPERS & AUDIO
+           ========================================================================== */
+        function deleteActivity(id) {
+            AppState.activities = AppState.activities.filter(a => a.id !== id);
+            renderDashboard();
+            renderActivityLog();
+            renderCalendarGrid();
+            showToast("Activity deleted.");
+        }
+
+        function calculateEndTime(startStr, durationMins) {
+            const [h, m] = startStr.split(':').map(Number);
+            const totalM = h * 60 + m + durationMins;
+            const endH = Math.floor(totalM / 60) % 24;
+            const endM = totalM % 60;
+            return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+        }
+
+        function getCategoryBgClass(cat) {
+            switch (cat) {
+                case 'Deep Work': return 'bg-indigo-500/20 text-indigo-400';
+                case 'Meeting': return 'bg-blue-500/20 text-blue-400';
+                case 'Learning': return 'bg-emerald-500/20 text-emerald-400';
+                case 'Fitness': return 'bg-amber-500/20 text-amber-400';
+                default: return 'bg-slate-700 text-slate-300';
+            }
+        }
+
+        function getCategoryColorHex(cat) {
+            switch (cat) {
+                case 'Deep Work': return '#6366f1';
+                case 'Meeting': return '#3b82f6';
+                case 'Learning': return '#10b981';
+                case 'Fitness': return '#f59e0b';
+                default: return '#64748b';
+            }
+        }
+
+        function getCategoryIcon(cat) {
+            switch (cat) {
+                case 'Deep Work': return '<i class="fa-solid fa-code"></i>';
+                case 'Meeting': return '<i class="fa-solid fa-user-group"></i>';
+                case 'Learning': return '<i class="fa-solid fa-book"></i>';
+                case 'Fitness': return '<i class="fa-solid fa-dumbbell"></i>';
+                default: return '<i class="fa-solid fa-layer-group"></i>';
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toastNotification');
+            document.getElementById('toastMessage').innerText = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        function playCompletionSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5 note
+                osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.3); // A5 note
+                gain.gain.setValueAtTime(0.15, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.3);
+            } catch (e) {
+                // Audio fallback silence
+            }
+        }
+
+        function changeCalDay(delta) {
+            showToast(delta > 0 ? "Viewing next day schedule" : "Viewing previous day schedule");
+        }
+    </script>
+</body>
+</html>
